@@ -4,6 +4,8 @@ node_modules/
 # build output
 pkg/
 *.tgz
+# ...but ship the built module package for easy download
+!dist/*.tgz
 
 # os cruft
 .DS_Store
