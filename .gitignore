@@ -1,0 +1,14 @@
+# dependencies
+node_modules/
+
+# build output
+pkg/
+*.tgz
+
+# os cruft
+.DS_Store
+Thumbs.db
+
+# logs
+*.log
+npm-debug.log*

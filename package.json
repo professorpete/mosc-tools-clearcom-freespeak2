@@ -1,0 +1,35 @@
+{
+	"name": "clearcom-freespeak2",
+	"version": "1.0.0",
+	"type": "module",
+	"main": "main.js",
+	"description": "Bitfocus Companion module for the Clear-Com FreeSpeak II Base Station (CCM API) with a comms kill switch",
+	"license": "MIT",
+	"scripts": {
+		"check": "node --check main.js && node -e \"import('./main.js').then(()=>console.log('module loads OK'))\"",
+		"package": "companion-module-build"
+	},
+	"dependencies": {
+		"@companion-module/base": "^1.14.1"
+	},
+	"devDependencies": {
+		"@companion-module/tools": "^2.7.2"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/professorpete/mosc-tools-clearcom-freespeak2.git"
+	},
+	"bugs": {
+		"url": "https://github.com/professorpete/mosc-tools-clearcom-freespeak2/issues"
+	},
+	"homepage": "https://github.com/professorpete/mosc-tools-clearcom-freespeak2#readme",
+	"author": "Peter Moscone (Mosc-tools) <mosc-tools@moscone.ca>",
+	"keywords": [
+		"companion-module",
+		"clearcom",
+		"freespeak",
+		"intercom",
+		"comms",
+		"mosc-tools"
+	]
+}

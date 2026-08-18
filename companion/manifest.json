@@ -1,0 +1,38 @@
+{
+	"$schema": "https://raw.githubusercontent.com/bitfocus/companion-module-base/main/assets/manifest.schema.json",
+	"type": "connection",
+	"id": "clearcom-freespeak2",
+	"name": "Clear-Com FreeSpeak II Base Station",
+	"shortname": "FreeSpeak II",
+	"description": "Control a Clear-Com FreeSpeak II Base Station (FSII-BASE-II) over IP via the Core Configuration Manager API. Provides a comms kill switch (Remote Mic Kill), GPO relay control, port gain ducking and live beltpack status.",
+	"version": "1.0.0",
+	"license": "MIT",
+	"repository": "https://github.com/professorpete/mosc-tools-clearcom-freespeak2.git",
+	"bugs": "https://github.com/professorpete/mosc-tools-clearcom-freespeak2/issues",
+	"maintainers": [
+		{
+			"name": "Peter Moscone",
+			"email": "mosc-tools@moscone.ca",
+			"github": "professorpete"
+		}
+	],
+	"legacyIds": [],
+	"runtime": {
+		"type": "node22",
+		"api": "nodejs-ipc",
+		"apiVersion": "1.14.1",
+		"entrypoint": "../main.js"
+	},
+	"manufacturer": "Clear-Com",
+	"products": [
+		"FreeSpeak II",
+		"FSII-BASE-II",
+		"FSII-BASE-II-5"
+	],
+	"keywords": [
+		"Intercom",
+		"Comms",
+		"Communication",
+		"Wireless"
+	]
+}
