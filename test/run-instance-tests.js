@@ -338,6 +338,177 @@ async function main() {
 	})
 	check('port_gain action applied', state.ports['1/1'].outputGain === -9)
 
+	// -----------------------------------------------------------------
+	// Dropdown choice building
+	// -----------------------------------------------------------------
+	const {
+		endpointChoices,
+		portChoices,
+		gpoChoices,
+		gpiChoices,
+		gainChoices,
+		choicesSignature,
+		firstEndpointId,
+	} = await import('../src/choices.js')
+
+	const epChoices = endpointChoices(einst)
+	check('endpoint dropdown lists every endpoint', epChoices.length === einst.state.endpoints.length)
+	check(
+		'endpoint dropdown labels include id and name',
+		epChoices.every((c) => /^\d+ · /.test(c.label)),
+		JSON.stringify(epChoices[0]),
+	)
+
+	// Offline packs sort last and are marked, so you do not target a dead pack.
+	const mixed = {
+		state: {
+			endpoints: [
+				{ id: 5, label: 'Dead Pack', type: 'BP', online: false },
+				{ id: 9, label: 'Stage Manager', type: 'HBP-2X', online: true },
+			],
+		},
+	}
+	const mixedChoices = endpointChoices(mixed)
+	check('online endpoints sort before offline', mixedChoices[0].id === '9')
+	check('offline endpoints are marked', /offline/.test(mixedChoices[1].label))
+	check('endpoint type shown in label', /HBP-2X/.test(mixedChoices[0].label))
+	check('firstEndpointId prefers an online endpoint', firstEndpointId(mixed) === '9')
+
+	const emptyChoices = endpointChoices({ state: { endpoints: [] } })
+	check('empty endpoint list yields a hint choice, never a crash', emptyChoices.length === 1)
+
+	const allChoices = endpointChoices(einst, { includeAll: true })
+	check('includeAll adds the system-wide option first', allChoices[0].id === '__all__')
+
+	// Interfaces were polled, so the port picker should be populated.
+	check('interfaces were read into state', einst.state.interfaces.length > 0)
+	const pChoices = portChoices(einst)
+	check('port dropdown flattens to interface:port ids', pChoices.some((c) => c.id === '1:2'))
+	check('port dropdown label carries interface type', pChoices.every((c) => /\[4W\]/.test(c.label)))
+	check('port dropdown falls back when nothing known', portChoices({ state: {} })[0].id === '1:1')
+
+	check('GPO dropdown offers the discovered relays', gpoChoices(einst).length >= 1)
+	check('GPI dropdown falls back to 2 inputs', gpiChoices({ state: {} }).length === 2)
+	check('2-wire gain steps are +3..-3', gainChoices('2W')[0].id === '3')
+	check('4-wire gain steps are +12..-12', gainChoices('4W')[0].id === '12')
+
+	// -----------------------------------------------------------------
+	// port_gain via the combined dropdown, and legacy options
+	// -----------------------------------------------------------------
+	await eactions.port_gain.callback({ options: { port: '1:2', which: 'outputGain', value: '-6' } })
+	check('port_gain accepts the interface:port dropdown value', state.ports['1/2'].outputGain === -6)
+
+	await eactions.port_gain.callback({
+		options: { interfaceId: '1', portId: '1', which: 'outputGain', value: '0' },
+	})
+	check('port_gain still honours pre-dropdown button options', state.ports['1/1'].outputGain === 0)
+
+	const beforeBadPort = einst.logs.length
+	await eactions.port_gain.callback({ options: { port: 'garbage', which: 'outputGain', value: '0' } })
+	check(
+		'port_gain warns on an unparseable port instead of throwing',
+		einst.logs.slice(beforeBadPort).some((l) => /warn/.test(l)),
+	)
+
+	// -----------------------------------------------------------------
+	// Definitions refresh so dropdowns stay current
+	// -----------------------------------------------------------------
+	const sigBefore = choicesSignature(einst)
+	check('signature is stable when nothing changed', choicesSignature(einst) === sigBefore)
+	check('no re-register when nothing changed', einst.refreshDefinitionsIfChanged() === false)
+
+	// Rename a pack the way an operator would in the CCM.
+	einst.state.endpoints[0].label = 'Renamed Pack'
+	check('signature changes when an endpoint is renamed', choicesSignature(einst) !== sigBefore)
+	check('re-registers definitions after a rename', einst.refreshDefinitionsIfChanged() === true)
+	check(
+		'refreshed dropdown shows the new name',
+		endpointChoices(einst).some((c) => /Renamed Pack/.test(c.label)),
+	)
+
+	// Going offline must also refresh, since the label gains an offline marker.
+	const sigOnline = choicesSignature(einst)
+	einst.state.endpoints[0].online = !einst.state.endpoints[0].online
+	check('signature changes when an endpoint goes offline', choicesSignature(einst) !== sigOnline)
+
+	// -----------------------------------------------------------------
+	// Kill exceptions: array form (multi-select) and panic override
+	// -----------------------------------------------------------------
+	einst.state.endpoints = normaliseEndpoints([
+		{ id: 11, label: 'Stage Manager', liveStatus: { status: 'online' } },
+		{ id: 12, label: 'Camera 1', liveStatus: { status: 'online' } },
+	])
+
+	check(
+		'exceptions accept the multi-select array form',
+		[...einst.resolveKillExceptions(['11'])].join() === '11',
+	)
+	check(
+		'exceptions accept multiple selected ids',
+		[...einst.resolveKillExceptions(['11', '12'])].sort().join() === '11,12',
+	)
+	check('exceptions accept a legacy comma string', [...einst.resolveKillExceptions('11,12')].sort().join() === '11,12')
+	check('exceptions match on endpoint name', [...einst.resolveKillExceptions(['Stage Manager'])].join() === '11')
+	check('exceptions are case-insensitive on names', [...einst.resolveKillExceptions(['stage manager'])].join() === '11')
+	check('empty array means no exceptions', einst.resolveKillExceptions([]).size === 0)
+	check('empty string means no exceptions', einst.resolveKillExceptions('').size === 0)
+	check(
+		'unknown numeric id is still honoured as an exception',
+		einst.resolveKillExceptions(['99']).has('99'),
+	)
+
+	const beforeUnmatched = einst.logs.length
+	einst.resolveKillExceptions(['Nobody By That Name'])
+	check(
+		'unmatched exception name warns the operator',
+		einst.logs.slice(beforeUnmatched).some((l) => /warn/.test(l)),
+	)
+
+	// Exempt endpoint must not receive an RMK; everyone else must.
+	// Per-endpoint RMK hits /endpoints/:id/rmk, system-wide hits /endpoints/rmk.
+	const rmkTargets = () =>
+		calls
+			.filter((c) => c.method === 'POST' && /\/endpoints\/(?:(\d+)\/)?rmk$/.test(c.url))
+			.map((c) => c.url.match(/\/endpoints\/(?:(\d+)\/)?rmk$/)[1] ?? 'all')
+
+	einst.config.killExceptIds = ['11']
+	calls.length = 0
+	await einst.setKill(true)
+	einst.stopBurst()
+	const targeted = rmkTargets()
+	check('kill with an exception spares the exempt endpoint', !targeted.includes('11'), JSON.stringify(targeted))
+	check('kill with an exception still kills the others', targeted.includes('12'), JSON.stringify(targeted))
+	check(
+		'kill with an exception never falls back to system-wide RMK',
+		!targeted.includes('all'),
+		JSON.stringify(targeted),
+	)
+	check('kill exception variable counts the exempt pack', Number(einst.variables.kill_except_count) === 1)
+	check(
+		'kill exception variable names the exempt pack',
+		String(einst.variables.kill_except_labels).includes('Stage Manager'),
+	)
+
+	await einst.setKill(false)
+
+	// Panic path: ignore exceptions entirely and use the system-wide RMK.
+	calls.length = 0
+	await einst.setKill(true, { respectExceptions: false })
+	einst.stopBurst()
+	const panicTargets = rmkTargets()
+	check('panic kill ignores exceptions', panicTargets.includes('all'), JSON.stringify(panicTargets))
+	const beforePanicLog = einst.logs.length
+	await einst.setKill(false)
+	await einst.setKill(true, { respectExceptions: false })
+	einst.stopBurst()
+	check(
+		'panic kill logs that it is overriding exceptions',
+		einst.logs.slice(beforePanicLog).some((l) => /ignoring configured kill exceptions/i.test(l)),
+	)
+	await einst.setKill(false)
+
+	einst.config.killExceptIds = []
+
 	await einst.destroy()
 
 	server.close()

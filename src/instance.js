@@ -5,7 +5,8 @@ import { getActions } from './actions.js'
 import { getFeedbacks } from './feedbacks.js'
 import { getPresets } from './presets.js'
 import { getVariableDefinitions, buildVariableValues } from './variables.js'
-import { normaliseEndpoints, normaliseGpio, normaliseDevice } from './parse.js'
+import { normaliseEndpoints, normaliseGpio, normaliseDevice, normaliseInterfaces } from './parse.js'
+import { choicesSignature } from './choices.js'
 
 export class FreeSpeak2Instance extends InstanceBase {
 	constructor(internal) {
@@ -28,6 +29,7 @@ export class FreeSpeak2Instance extends InstanceBase {
 			deviceName: '',
 			deviceVersion: '',
 			endpoints: [],
+			interfaces: [],
 			gpo: {},
 			gpi: {},
 			savedGains: [],
@@ -78,7 +80,7 @@ export class FreeSpeak2Instance extends InstanceBase {
 	}
 
 	getConfigFields() {
-		return getConfigFields()
+		return getConfigFields(this)
 	}
 
 	rebuildDefinitions() {
@@ -164,16 +166,7 @@ export class FreeSpeak2Instance extends InstanceBase {
 			// Endpoints (beltpacks / wired stations)
 			const epRes = await this.client.getEndpoints(this.deviceId)
 			if (epRes.ok) {
-				const endpoints = normaliseEndpoints(epRes.data)
-				const sig = endpoints.map((e) => `${e.id}:${e.label}`).join('|')
-				this.state.endpoints = endpoints
-				if (sig !== this.endpointSignature) {
-					this.endpointSignature = sig
-					// Endpoint list changed -> rebuild dropdowns and variables
-					this.setActionDefinitions(getActions(this))
-					this.setFeedbackDefinitions(getFeedbacks(this))
-					this.setVariableDefinitions(getVariableDefinitions(this))
-				}
+				this.state.endpoints = normaliseEndpoints(epRes.data)
 			} else if (initial) {
 				this.log('debug', `Could not read endpoints: ${epRes.error}. Kill switch still works.`)
 			}
@@ -186,6 +179,14 @@ export class FreeSpeak2Instance extends InstanceBase {
 				this.state.gpi = { ...this.state.gpi, ...gpi }
 			}
 
+			// Interfaces + ports. These almost never change mid-show, so they are
+			// only read on the first poll (and by the Refresh action) rather than
+			// on every cycle.
+			if (initial || !this.state.interfaces.length) {
+				await this.refreshInterfaces()
+			}
+
+			this.refreshDefinitionsIfChanged()
 			this.syncVariables()
 			this.checkAllFeedbacks()
 		} finally {
@@ -238,19 +239,162 @@ export class FreeSpeak2Instance extends InstanceBase {
 	}
 
 	/**
+	 * Resolve the configured kill exceptions to a Set of string endpoint IDs.
+	 * Accepts endpoint IDs or (case-insensitive) endpoint names, so an operator
+	 * can type "Stage Manager" instead of hunting for a numeric ID.
+	 */
+	resolveKillExceptions(raw) {
+		// The config field is a multi-select, so this is normally an array of
+		// endpoint IDs. Strings are still accepted (comma separated) for configs
+		// saved before the picker existed, and for typed-in custom values.
+		const input = raw ?? this.config?.killExceptIds ?? ''
+		const tokens = Array.isArray(input)
+			? input.flatMap((v) => String(v ?? '').split(','))
+			: String(input).split(',')
+
+		if (!tokens.some((t) => t.trim())) return new Set()
+
+		const out = new Set()
+		const unmatched = []
+		for (const tokenRaw of tokens) {
+			const token = tokenRaw.trim()
+			if (!token) continue
+
+			// Direct ID match against what we know about the system.
+			const byId = this.state.endpoints.find((e) => String(e.id) === token)
+			if (byId) {
+				out.add(String(byId.id))
+				continue
+			}
+
+			// Name match.
+			const byName = this.state.endpoints.find(
+				(e) => String(e.label ?? '').toLowerCase() === token.toLowerCase(),
+			)
+			if (byName) {
+				out.add(String(byName.id))
+				continue
+			}
+
+			// Numeric but not currently in our list (pack may be powered off).
+			// Honour it anyway - it is an exception, so erring toward "leave live"
+			// is not a safety risk, and the pack may appear later.
+			if (/^\d+$/.test(token)) {
+				out.add(token)
+			} else {
+				unmatched.push(token)
+			}
+		}
+
+		if (unmatched.length) {
+			this.log(
+				'warn',
+				`Kill exception(s) not recognised and will be IGNORED (they will be killed): ${unmatched.join(', ')}`,
+			)
+		}
+		return out
+	}
+
+	/**
+	 * Selective RMK: unlatch every endpoint EXCEPT the given IDs.
+	 *
+	 * The base station has no "RMK all except" route - RMK is either
+	 * system-wide or single-endpoint - so this fans out one RMK per endpoint.
+	 * The endpoint list is refreshed first so a pack that powered on since the
+	 * last poll still gets killed.
+	 *
+	 * @returns {Promise<boolean>} true if at least one endpoint was unlatched,
+	 *   or if there was genuinely nothing to unlatch.
+	 */
+	async doRmkExcept(exceptIds) {
+		// Refresh so we never miss a pack that just came online.
+		const fresh = await this.client.getDevices()
+		if (fresh.ok && fresh.data) {
+			try {
+				const eps = normaliseEndpoints(fresh.data)
+				if (eps.length) this.state.endpoints = eps
+			} catch {
+				/* keep cached list */
+			}
+		} else {
+			this.log(
+				'warn',
+				'Kill exception: could not refresh endpoint list, using last known list. ' +
+					'A pack that powered on very recently may not be killed.',
+			)
+		}
+
+		const targets = this.state.endpoints.filter((e) => !exceptIds.has(String(e.id)))
+		const skipped = this.state.endpoints.filter((e) => exceptIds.has(String(e.id)))
+
+		if (!targets.length) {
+			this.log('warn', 'Kill exception: no endpoints left to kill (everything is excepted)')
+			// Nothing to do is not a failure - but it is also not a kill.
+			return this.state.endpoints.length > 0
+		}
+
+		// Fire in parallel - a kill switch must not walk a list serially.
+		const results = await Promise.all(
+			targets.map(async (ep) => {
+				const res = await this.client.rmk(this.deviceId, ep.id)
+				return { ep, ok: !!res.ok, error: res.error }
+			}),
+		)
+
+		const okResults = results.filter((r) => r.ok)
+		const failed = results.filter((r) => !r.ok)
+
+		for (const r of okResults) {
+			const ep = this.state.endpoints.find((e) => String(e.id) === String(r.ep.id))
+			if (ep) ep.talking = false
+		}
+
+		if (okResults.length) {
+			this.state.killCount += 1
+			this.state.lastKillTime = new Date().toLocaleTimeString()
+		}
+
+		if (failed.length) {
+			this.log(
+				'error',
+				`RMK failed for ${failed.length} of ${results.length} endpoint(s): ` +
+					failed.map((r) => `${r.ep.label ?? r.ep.id} (${r.error ?? 'error'})`).join(', '),
+			)
+			this.updateStatus(InstanceStatus.UnknownWarning, 'Kill partially failed')
+		}
+
+		if (skipped.length) {
+			this.log(
+				'info',
+				`RMK all-except: unlatched ${okResults.length} endpoint(s), left LIVE: ` +
+					skipped.map((e) => `${e.label ?? 'endpoint'} (id ${e.id})`).join(', '),
+			)
+		}
+
+		this.syncVariables()
+		this.checkAllFeedbacks()
+		return okResults.length > 0
+	}
+
+	/**
 	 * Fire RMK repeatedly for durationMs.
+	 * @param {Set<string>} [exceptIds] endpoints to leave live; when non-empty
+	 *   the burst uses per-endpoint RMK instead of the system-wide route.
 	 * @returns {Promise<boolean>} whether the FIRST RMK succeeded
 	 */
-	async rmkBurst(durationMs = 3000, intervalMs = 500) {
+	async rmkBurst(durationMs = 3000, intervalMs = 500, exceptIds = new Set()) {
 		this.stopBurst()
 		this.state.killBurstActive = true
 		this.checkFeedbacks('kill_flash')
 
-		const firstOk = await this.doRmk(null)
+		const useExcept = exceptIds && exceptIds.size > 0
+		const fire = () => (useExcept ? this.doRmkExcept(exceptIds) : this.doRmk(null))
+
+		const firstOk = await fire()
 
 		if (durationMs > 0) {
 			this.burstTimer = setInterval(() => {
-				this.doRmk(null).catch(() => {})
+				fire().catch(() => {})
 			}, Math.max(100, intervalMs))
 
 			this.burstEndTimer = setTimeout(() => {
@@ -304,13 +448,20 @@ export class FreeSpeak2Instance extends InstanceBase {
 	// -----------------------------------------------------------------
 	// The kill switch
 	// -----------------------------------------------------------------
-	async setKill(kill, { useGpo = false, duckPorts = false } = {}) {
+	async setKill(kill, { useGpo = false, duckPorts = false, respectExceptions = true } = {}) {
 		if (kill) {
 			this.log('warn', 'COMMS KILL engaged')
 
 			// 1. RMK - release every latched talk key, immediately.
+			// Exceptions switch us from one system-wide RMK to a per-endpoint
+			// fan-out that skips the listed packs. `respectExceptions: false` is
+			// the panic path: kill absolutely everyone, no exemptions.
 			const holdMs = Number(this.config?.killHoldMs ?? 3000)
-			const rmkOk = await this.rmkBurst(holdMs, 400)
+			const exceptIds = respectExceptions ? this.resolveKillExceptions() : new Set()
+			if (!respectExceptions && this.resolveKillExceptions().size > 0) {
+				this.log('warn', 'COMMS KILL: ignoring configured kill exceptions - killing every endpoint')
+			}
+			const rmkOk = await this.rmkBurst(holdMs, 400, exceptIds)
 
 			// 2. Optional GPO hard cut.
 			let gpoOk = true
@@ -364,6 +515,42 @@ export class FreeSpeak2Instance extends InstanceBase {
 
 		this.syncVariables()
 		this.checkAllFeedbacks()
+		return true
+	}
+
+	/**
+	 * Read the interface + port list, which populates the interface/port
+	 * dropdowns. Failure is non-fatal: the dropdowns fall back to manual entry.
+	 */
+	async refreshInterfaces() {
+		const res = await this.client.getInterfaces(this.deviceId)
+		if (!res.ok || !res.data) {
+			if (this.config?.verbose) {
+				this.log('debug', `Could not read interfaces: ${res.error}`)
+			}
+			return false
+		}
+		try {
+			this.state.interfaces = normaliseInterfaces(res.data)
+			return true
+		} catch (e) {
+			this.log('debug', `Could not parse interfaces: ${e?.message ?? e}`)
+			return false
+		}
+	}
+
+	/**
+	 * Re-register actions/feedbacks/variables when anything the dropdowns are
+	 * built from has changed, so the pickers in Companion show current beltpack
+	 * names without the user reloading anything.
+	 */
+	refreshDefinitionsIfChanged() {
+		const sig = choicesSignature(this)
+		if (sig === this.choicesSig) return false
+		this.choicesSig = sig
+		this.setActionDefinitions(getActions(this))
+		this.setFeedbackDefinitions(getFeedbacks(this))
+		this.setVariableDefinitions(getVariableDefinitions(this))
 		return true
 	}
 

@@ -52,12 +52,60 @@ IDs to drive.
   error), the module logs an error and the button does **not** turn red —
   a kill that did nothing will never be shown as engaged.
 
+## Picking endpoints, relays and ports
+
+Anywhere the module needs an endpoint, a GPIO relay, or an interface port, you
+get a **dropdown built from what the base station actually reports** — beltpacks
+and stations appear by name, e.g. `11 · Stage Manager (HBP-2X)`. Offline packs
+are listed last and marked `— offline`, so you do not assign a button to a dead
+pack by mistake.
+
+The lists refresh on their own. When a pack is renamed, powered on, or drops off,
+the module re-registers its actions and feedbacks so the pickers stay current —
+no reload needed.
+
+Every one of these dropdowns also accepts a **custom value**, so you can still
+type a numeric ID or a `$(variable)` for a pack that is powered off, or when
+building a page before the base station is reachable.
+
+If a dropdown shows only a hint like *(no endpoints found yet)*, the connection
+has not polled the base station yet — check the connection status first.
+
+## Kill exceptions — keeping someone live
+
+In the connection config, **Leave these endpoints live** is a multi-select of
+every endpoint the base station reports. Pick the stage manager, the PM, whoever
+must keep talking through a kill.
+
+When at least one exception is set, the module stops sending the single
+system-wide RMK and instead sends a **per-endpoint RMK to everyone except** the
+listed packs. It re-reads the endpoint list right before firing so a pack that
+powered on since the last poll is still caught, and it logs exactly who was left
+live. `$(clearcom-freespeak2:kill_except_labels)` and
+`$(clearcom-freespeak2:kill_except_count)` let you put that on a button.
+
+**Two important limits:**
+
+1. The FreeSpeak II API has **no native exclusion** — RMK is system-wide or
+   single-endpoint, nothing else. So the fan-out is N requests rather than one and
+   is **not atomic**: a pack registering *during* the fan-out could be missed. The
+   repeating burst mitigates this, but a plain no-exceptions RMK is still the more
+   absolute kill.
+2. **GPO hard-cut and port-gain ducking cannot be selective.** They are
+   wiring-level and cut whatever is patched through them. If you enable either,
+   the exception applies to the RMK layer only. For a genuinely selective kill,
+   use RMK alone.
+
+For a true panic button, uncheck **Respect kill exceptions** on the *Comms kill*
+action. It ignores the list, kills every endpoint system-wide, and logs that it
+overrode the exemptions.
+
 ## Actions
 
 | Action | Description |
 | --- | --- |
-| **Comms kill switch** | Kill / restore / toggle. Options for GPO hard-cut and port-gain duck. |
-| **RMK — remote master kill (talk keys)** | One-shot RMK to all endpoints or one endpoint ID. |
+| **Comms kill switch** | Kill / restore / toggle. Options for GPO hard-cut, port-gain duck, and whether to respect kill exceptions. |
+| **RMK — remote master kill (talk keys)** | One-shot RMK to all endpoints, or one endpoint picked by name. |
 | **RMK repeat burst** | RMK every N ms for a duration (stomps re-latches). |
 | **Set GPO / Set GPI** | Drive or release a GPIO override (`active` / `inactive` / `release to normal`). |
 | **Call signal to endpoint** | Sends a call flash to a beltpack/station. |
@@ -80,7 +128,8 @@ IDs to drive.
 
 Includes `killed`, `kill_count`, `last_kill_time`, `device_name`,
 `endpoints_total`, `endpoints_online`, `endpoints_talking`, `gpo_1..4`,
-`gpi_1..2`, plus per-endpoint name/online/talking/battery variables.
+`gpi_1..2`, `kill_except_count`, `kill_except_labels`, plus per-endpoint
+name/online/talking/battery variables.
 
 ## Presets
 

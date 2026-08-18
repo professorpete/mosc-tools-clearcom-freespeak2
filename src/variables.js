@@ -11,6 +11,8 @@ export function getVariableDefinitions(self) {
 		{ variableId: 'endpoints_online', name: 'Endpoints online' },
 		{ variableId: 'endpoints_talking', name: 'Endpoints with an active talk key' },
 		{ variableId: 'talking_labels', name: 'Labels of endpoints currently talking' },
+		{ variableId: 'kill_except_count', name: 'Endpoints exempt from the kill' },
+		{ variableId: 'kill_except_labels', name: 'Labels of endpoints exempt from the kill' },
 	]
 
 	for (let i = 1; i <= 4; i++) {
@@ -36,6 +38,19 @@ export function buildVariableValues(self) {
 	const s = self.state
 	const talking = s.endpoints.filter((e) => e.talking === true)
 
+	// Who is currently exempt from the kill, so it can be shown on a button.
+	// Resolution is best-effort: never let a variable break the poll.
+	let exempt = new Set()
+	try {
+		exempt = self.resolveKillExceptions?.() ?? new Set()
+	} catch {
+		exempt = new Set()
+	}
+	const exemptLabels = [...exempt].map((id) => {
+		const ep = s.endpoints.find((e) => String(e.id) === String(id))
+		return ep?.label ?? `id ${id}`
+	})
+
 	const values = {
 		connected: String(!!s.connected),
 		device_name: s.deviceName ?? '',
@@ -48,6 +63,8 @@ export function buildVariableValues(self) {
 		endpoints_online: s.endpoints.filter((e) => e.online === true).length,
 		endpoints_talking: talking.length,
 		talking_labels: talking.map((e) => e.label ?? e.id).join(', '),
+		kill_except_count: exempt.size,
+		kill_except_labels: exemptLabels.join(', '),
 	}
 
 	for (let i = 1; i <= 4; i++) {

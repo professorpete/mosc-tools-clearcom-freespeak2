@@ -5,7 +5,7 @@
 	"name": "Clear-Com FreeSpeak II Base Station",
 	"shortname": "FreeSpeak II",
 	"description": "Control a Clear-Com FreeSpeak II Base Station (FSII-BASE-II) over IP via the Core Configuration Manager API. Provides a comms kill switch (Remote Mic Kill), GPO relay control, port gain ducking and live beltpack status.",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"license": "MIT",
 	"repository": "https://github.com/professorpete/mosc-tools-clearcom-freespeak2.git",
 	"bugs": "https://github.com/professorpete/mosc-tools-clearcom-freespeak2/issues",

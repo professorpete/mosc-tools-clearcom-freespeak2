@@ -148,3 +148,47 @@ export function normaliseGpio(data) {
 
 	return { gpo, gpi }
 }
+
+/**
+ * Interfaces + their ports from /api/1/devices/:d/interfaces/
+ *
+ * Firmware builds vary in how they name these fields (and whether ports are
+ * nested or flat), so this is deliberately forgiving. Anything without an id
+ * is dropped rather than guessed at.
+ */
+export function normaliseInterfaces(data) {
+	const list = asArray(data, 'interfaces')
+
+	return list
+		.map((iface) => {
+			const id = pick(iface, 'id', 'audioInterface_id', 'interface_id', 'interfaceId')
+			if (id === undefined) return null
+
+			const type = String(
+				pick(iface, 'audioInterfaceType_shortName', 'type', 'audioInterfaceType_name') ?? '',
+			)
+
+			const rawPorts = asArray(pick(iface, 'ports', 'port_list') ?? [], 'ports')
+			const ports = rawPorts
+				.map((p) => {
+					const pid = pick(p, 'id', 'port_id', 'portId')
+					if (pid === undefined) return null
+					const settings = pick(p, 'settings', 'port_settings') ?? {}
+					return {
+						id: pid,
+						label: String(pick(p, 'label', 'port_label', 'name', 'port_config_type') ?? `Port ${pid}`),
+						outputGain: pick(settings, 'outputGain'),
+						inputGain: pick(settings, 'inputGain'),
+					}
+				})
+				.filter((x) => x !== null)
+
+			return {
+				id,
+				label: String(pick(iface, 'label', 'audioInterface_label', 'name') ?? `Interface ${id}`),
+				type,
+				ports,
+			}
+		})
+		.filter((x) => x !== null)
+}

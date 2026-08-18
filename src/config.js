@@ -1,6 +1,14 @@
 import { Regex } from '@companion-module/base'
 
-export function getConfigFields() {
+import { endpointChoices } from './choices.js'
+
+/**
+ * @param {object} [self] the instance. Passed in so the kill-exception picker
+ * can be populated with real beltpack names from the last poll. Companion
+ * calls getConfigFields() each time the config pane opens, so the list is
+ * current as long as the connection has polled at least once.
+ */
+export function getConfigFields(self) {
 	return [
 		{
 			type: 'static-text',
@@ -134,6 +142,31 @@ export function getConfigFields() {
 				{ id: 'false', label: 'Open / de-energise relay' },
 			],
 			isVisible: (cfg) => !!cfg.killUseGpo,
+		},
+		{
+			type: 'static-text',
+			id: 'infoExcept',
+			width: 12,
+			label: 'Kill exceptions (keep someone live)',
+			value:
+				'Pick the endpoints that must stay live through a kill — typically the stage manager or PM. ' +
+				'When this is set, the module stops using the single system-wide RMK and instead sends RMK to ' +
+				'each endpoint individually, skipping the ones listed. It refreshes the endpoint list first so ' +
+				'newly powered-on packs are still caught. ' +
+				'<strong>Note:</strong> a GPO hard-cut and gain ducking are wiring-level and cannot be selective — ' +
+				'if you use them, the exception only applies to the RMK layer.',
+		},
+		{
+			type: 'multidropdown',
+			id: 'killExceptIds',
+			label: 'Leave these endpoints live (blank = kill everyone)',
+			width: 12,
+			default: [],
+			choices: endpointChoices(self ?? {}),
+			allowCustom: true,
+			tooltip:
+				'The list is read live from the base station. If a pack is powered off it will not appear — ' +
+				'you can still add it by typing its numeric ID or its exact name.',
 		},
 		{
 			type: 'checkbox',

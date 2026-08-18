@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/professorpete/mosc-tools-clearcom-freespeak2/raw/main/dist/clearcom-freespeak2-1.0.0.tgz">
+  <a href="https://github.com/professorpete/mosc-tools-clearcom-freespeak2/raw/main/dist/clearcom-freespeak2-1.1.0.tgz">
     <img src="https://img.shields.io/badge/⬇%20Download-module%20package-2ea44f?style=for-the-badge&labelColor=1a1a1a" alt="Download module package">
   </a>
   &nbsp;
@@ -59,6 +59,13 @@ One Streamdeck key.
 - **Call signals** and **endpoint reboot**.
 - **Live status polling** — endpoints online, who's talking, battery levels, GPIO states,
   all exposed as variables and feedbacks.
+- **Everything is a dropdown** — beltpacks, stations, GPIO relays and interface ports are
+  all picked from live lists read off the base station, showing real names like
+  `11 · Stage Manager (HBP-2X)` instead of bare numbers. The lists refresh themselves as
+  packs are renamed, powered on, or dropped. You can still type an ID or a `$(variable)`
+  for a pack that is powered off, or when building a page before the base is reachable.
+- **Kill exceptions** — keep one or more packs live through a kill
+  (see [below](#kill-exceptions)).
 - **11 presets** ready to drop on a page, including a latching KILL COMMS toggle, a
   panic hard-cut, and a momentary kill-while-held.
 
@@ -67,7 +74,7 @@ One Streamdeck key.
 1. **Get the base station IP.** On the front panel: **Menu → Networking → Preferences →
    IP address**. Confirm `http://<base-ip>/` loads the CCM in a browser.
 2. **Install the module.** Download
-   [`clearcom-freespeak2-1.0.0.tgz`](https://github.com/professorpete/mosc-tools-clearcom-freespeak2/raw/main/dist/clearcom-freespeak2-1.0.0.tgz), then in Companion 3.4+:
+   [`clearcom-freespeak2-1.1.0.tgz`](https://github.com/professorpete/mosc-tools-clearcom-freespeak2/raw/main/dist/clearcom-freespeak2-1.1.0.tgz), then in Companion 3.4+:
    **Connections → Import module package**. (Or build from source and point your
    developer modules path at `pkg/`.)
 3. **Add the connection** — *Clear-Com: FreeSpeak II Base Station*. Enter the IP and
@@ -96,17 +103,43 @@ path and enable **Use GPO hard-cut**.
 Releasing the kill restores ducked gains and hands GPO overrides back to normal base logic
 (`enabled: null`), so you're not left with a latched relay after the show.
 
+### Kill exceptions
+
+Often you want everyone off talk **except** the stage manager or the PM. In the connection
+config, **Leave these endpoints live** is a multi-select of every endpoint the base station
+reports — pick them by name.
+
+With at least one exception set, the module stops sending the single system-wide RMK and
+instead fans out a per-endpoint RMK to everyone *except* the listed packs. It re-reads the
+endpoint list immediately before firing, so a pack that powered on since the last poll is
+still caught. It logs exactly who was left live, and `$(clearcom-freespeak2:kill_except_labels)`
+shows it on a button.
+
+Two things to know before you rely on this:
+
+- **The FreeSpeak II API has no native exclusion.** RMK is system-wide or single-endpoint,
+  nothing else. The fan-out is therefore **not atomic** — it is N requests, not one — so
+  a pack that registers *during* the fan-out could be missed. The repeating burst mitigates
+  this, but a plain system-wide RMK (no exceptions) is still the more absolute kill.
+- **GPO hard-cut and port gain ducking cannot be selective.** They are wiring-level and hit
+  whatever is patched through them. If you enable either, the exception only applies to the
+  RMK layer. For a genuinely selective kill, use RMK only.
+
+For a true panic button, uncheck **Respect kill exceptions** on the *Comms kill* action.
+That ignores the exception list, kills every endpoint via the system-wide RMK, and logs
+that it overrode the exemptions.
+
 ## Actions
 
 | Action | Notes |
 | --- | --- |
-| **Comms kill switch** | Kill / restore / toggle, with GPO and port-duck options |
-| **RMK — remote master kill (talk keys)** | All endpoints, or one by ID |
+| **Comms kill switch** | Kill / restore / toggle, with GPO, port-duck and kill-exception options |
+| **RMK — remote master kill (talk keys)** | All endpoints, or one picked by name |
 | **RMK repeat burst** | Every N ms for a set duration |
-| **Set GPO** / **Set GPI** | Active, inactive, or release-to-normal |
+| **Set GPO** / **Set GPI** | Active, inactive, or release-to-normal; relay picked from a dropdown |
 | **Call signal to endpoint** | Call flash to a beltpack or station |
-| **Set port gain** | Per interface + port, input or output |
-| **Reboot endpoint** | Reboots a beltpack/station |
+| **Set port gain** | Port picked from a live `interface:port` dropdown, input or output, with valid dB steps listed |
+| **Reboot endpoint** | Reboots a beltpack/station picked by name (no "all" option, on purpose) |
 | **Refresh state now** | Immediate poll |
 
 ## Feedbacks & variables
@@ -116,7 +149,8 @@ Feedbacks: **comms killed**, **kill burst in progress**, **connected**, **GPO ac
 
 Variables include `killed`, `kill_count`, `last_kill_time`, `device_name`,
 `endpoints_total`, `endpoints_online`, `endpoints_talking`, `gpo_1`–`gpo_4`,
-`gpi_1`–`gpi_2`, plus per-endpoint name / online / talking / battery.
+`gpi_1`–`gpi_2`, `kill_except_count`, `kill_except_labels`, plus per-endpoint
+name / online / talking / battery.
 
 ## Compatibility
 

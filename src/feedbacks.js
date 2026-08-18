@@ -1,3 +1,4 @@
+import { endpointChoices, firstEndpointId, gpoChoices } from './choices.js'
 import { combineRgb } from '@companion-module/base'
 
 const RED = combineRgb(200, 0, 0)
@@ -41,11 +42,12 @@ export function getFeedbacks(self) {
 			defaultStyle: { bgcolor: RED, color: WHITE },
 			options: [
 				{
-					type: 'textinput',
+					type: 'dropdown',
 					id: 'id',
-					label: 'GPO ID',
-					default: '1',
-					useVariables: true,
+					label: 'GPO',
+					default: gpoChoices(self)[0]?.id ?? '1',
+					choices: gpoChoices(self),
+					allowCustom: true,
 				},
 			],
 			callback: async (feedback) => {
@@ -64,12 +66,10 @@ export function getFeedbacks(self) {
 					type: 'dropdown',
 					id: 'endpoint',
 					label: 'Endpoint',
-					default: '',
-					choices: self.state.endpoints.map((e) => ({
-						id: String(e.id),
-						label: e.label ?? `Endpoint ${e.id}`,
-					})),
+					default: firstEndpointId(self),
+					choices: endpointChoices(self),
 					allowCustom: true,
+					tooltip: 'Pick a beltpack or station by name, or type an ID / $(variable).',
 				},
 			],
 			callback: async (feedback) => {
@@ -88,12 +88,10 @@ export function getFeedbacks(self) {
 					type: 'dropdown',
 					id: 'endpoint',
 					label: 'Endpoint',
-					default: '',
-					choices: self.state.endpoints.map((e) => ({
-						id: String(e.id),
-						label: e.label ?? `Endpoint ${e.id}`,
-					})),
+					default: firstEndpointId(self),
+					choices: endpointChoices(self),
 					allowCustom: true,
+					tooltip: 'Pick a beltpack or station by name, or type an ID / $(variable).',
 				},
 			],
 			callback: async (feedback) => {

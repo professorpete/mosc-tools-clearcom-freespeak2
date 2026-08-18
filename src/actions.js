@@ -1,11 +1,17 @@
-const ENDPOINT_ALL = '__all__'
+import {
+	ENDPOINT_ALL,
+	endpointChoices,
+	firstEndpointId,
+	gpoChoices,
+	gpiChoices,
+	interfaceChoices,
+	portChoices,
+	gainChoices,
+} from './choices.js'
+
+export { ENDPOINT_ALL }
 
 export function getActions(self) {
-	const endpointChoices = () => [
-		{ id: ENDPOINT_ALL, label: 'ALL endpoints (system wide)' },
-		...self.state.endpoints.map((e) => ({ id: String(e.id), label: e.label ?? `Endpoint ${e.id}` })),
-	]
-
 	return {
 		// -------------------------------------------------------------
 		// THE KILL SWITCH
@@ -38,6 +44,15 @@ export function getActions(self) {
 					label: 'Also duck 4-wire port output gain to minimum',
 					default: false,
 				},
+				{
+					type: 'checkbox',
+					id: 'respectExceptions',
+					label: 'Respect kill exceptions from config (leave exempt packs live)',
+					default: true,
+					tooltip:
+						'Uncheck for a true panic button that kills every endpoint including the exempt ones. ' +
+						'Exceptions are chosen in this connection\'s config.',
+				},
 			],
 			callback: async (event) => {
 				const mode = event.options.mode ?? 'toggle'
@@ -48,6 +63,8 @@ export function getActions(self) {
 				await self.setKill(kill, {
 					useGpo: event.options.useGpo || self.config.killUseGpo,
 					duckPorts: !!event.options.duckPorts,
+					// Undefined on buttons created before this option existed -> default true.
+					respectExceptions: event.options.respectExceptions !== false,
 				})
 			},
 		},
@@ -65,9 +82,10 @@ export function getActions(self) {
 					id: 'endpoint',
 					label: 'Endpoint',
 					default: ENDPOINT_ALL,
-					choices: endpointChoices(),
+					choices: endpointChoices(self, { includeAll: true }),
 					allowCustom: true,
-					tooltip: 'Custom value may be a numeric endpoint ID.',
+					tooltip:
+						'Pick a beltpack or station by name. Custom value may be a numeric endpoint ID or $(variable).',
 				},
 			],
 			callback: async (event) => {
@@ -111,11 +129,13 @@ export function getActions(self) {
 			name: 'Set GPO relay',
 			options: [
 				{
-					type: 'textinput',
+					type: 'dropdown',
 					id: 'id',
-					label: 'GPO ID (1-4)',
-					default: '1',
-					useVariables: true,
+					label: 'GPO',
+					default: gpoChoices(self)[0]?.id ?? '1',
+					choices: gpoChoices(self),
+					allowCustom: true,
+					tooltip: 'Pick a relay, or type an ID / $(variable) for one not listed.',
 				},
 				{
 					type: 'dropdown',
@@ -144,11 +164,13 @@ export function getActions(self) {
 			name: 'Set GPI (virtual trigger)',
 			options: [
 				{
-					type: 'textinput',
+					type: 'dropdown',
 					id: 'id',
-					label: 'GPI ID (1-2)',
-					default: '1',
-					useVariables: true,
+					label: 'GPI',
+					default: gpiChoices(self)[0]?.id ?? '1',
+					choices: gpiChoices(self),
+					allowCustom: true,
+					tooltip: 'Pick an input, or type an ID / $(variable) for one not listed.',
 				},
 				{
 					type: 'dropdown',
@@ -181,7 +203,7 @@ export function getActions(self) {
 					id: 'endpoint',
 					label: 'Endpoint',
 					default: ENDPOINT_ALL,
-					choices: endpointChoices(),
+					choices: endpointChoices(self, { includeAll: true }),
 					allowCustom: true,
 				},
 				{
@@ -224,8 +246,17 @@ export function getActions(self) {
 			description:
 				'Set input or output gain on a port. Useful to duck or floor an interfaced 4-wire feed. Valid steps depend on interface type (2-wire: 3..-3 dB, 4-wire: 12..-12 dB).',
 			options: [
-				{ type: 'textinput', id: 'interfaceId', label: 'Interface ID', default: '1', useVariables: true },
-				{ type: 'textinput', id: 'portId', label: 'Port ID', default: '1', useVariables: true },
+				{
+					type: 'dropdown',
+					id: 'port',
+					label: 'Interface : Port',
+					default: portChoices(self)[0]?.id ?? '1:1',
+					choices: portChoices(self),
+					allowCustom: true,
+					tooltip:
+						'Pick a port from the base station, or type "interface:port" (e.g. 2:3). ' +
+						'Supports $(variables).',
+				},
 				{
 					type: 'dropdown',
 					id: 'which',
@@ -236,11 +267,35 @@ export function getActions(self) {
 						{ id: 'inputGain', label: 'Input gain' },
 					],
 				},
-				{ type: 'textinput', id: 'value', label: 'Value (dB)', default: '-12', useVariables: true },
+				{
+					type: 'dropdown',
+					id: 'value',
+					label: 'Value (dB)',
+					default: '-12',
+					choices: gainChoices(),
+					allowCustom: true,
+					tooltip:
+						'Valid steps depend on interface type: 2-wire is +3..-3, everything else +12..-12 in 3 dB steps.',
+				},
 			],
 			callback: async (event) => {
-				const interfaceId = await self.parseVariablesInString(String(event.options.interfaceId))
-				const portId = await self.parseVariablesInString(String(event.options.portId))
+				// Accepts the combined "interface:port" picker, and still honours
+				// the older separate interfaceId/portId options on existing buttons.
+				let interfaceId
+				let portId
+				if (event.options.port !== undefined && event.options.port !== '') {
+					const combined = await self.parseVariablesInString(String(event.options.port))
+					const [i, p] = String(combined).split(':')
+					interfaceId = (i ?? '').trim()
+					portId = (p ?? '').trim()
+				} else {
+					interfaceId = await self.parseVariablesInString(String(event.options.interfaceId ?? '1'))
+					portId = await self.parseVariablesInString(String(event.options.portId ?? '1'))
+				}
+				if (!interfaceId || !portId) {
+					self.log('warn', `Set port gain: could not read a valid interface:port from "${event.options.port ?? ''}"`)
+					return
+				}
 				const value = Number(await self.parseVariablesInString(String(event.options.value)))
 				const res = await self.client.updatePort(self.deviceId, interfaceId, portId, {
 					settings: { [event.options.which]: value },
@@ -259,12 +314,10 @@ export function getActions(self) {
 					type: 'dropdown',
 					id: 'endpoint',
 					label: 'Endpoint',
-					default: '',
-					choices: self.state.endpoints.map((e) => ({
-						id: String(e.id),
-						label: e.label ?? `Endpoint ${e.id}`,
-					})),
+					default: firstEndpointId(self),
+					choices: endpointChoices(self),
 					allowCustom: true,
+					tooltip: 'Pick the beltpack or station to reboot. No "all" option here, on purpose.',
 				},
 			],
 			callback: async (event) => {
