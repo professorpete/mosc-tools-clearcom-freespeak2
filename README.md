@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/professorpete/mosc-tools-clearcom-freespeak2/releases/latest">
+  <a href="https://github.com/professorpete/mosc-tools-clearcom-freespeak2/raw/main/dist/clearcom-freespeak2-1.0.0.tgz">
     <img src="https://img.shields.io/badge/⬇%20Download-module%20package-2ea44f?style=for-the-badge&labelColor=1a1a1a" alt="Download module package">
   </a>
   &nbsp;
@@ -66,10 +66,10 @@ One Streamdeck key.
 
 1. **Get the base station IP.** On the front panel: **Menu → Networking → Preferences →
    IP address**. Confirm `http://<base-ip>/` loads the CCM in a browser.
-2. **Install the module.** Grab `clearcom-freespeak2-x.x.x.tgz` from
-   [Releases](https://github.com/professorpete/mosc-tools-clearcom-freespeak2/releases/latest).
-   In Companion 3.4+: **Connections → Import module package**. (Or unpack the `pkg/`
-   folder into your developer modules path.)
+2. **Install the module.** Download
+   [`clearcom-freespeak2-1.0.0.tgz`](https://github.com/professorpete/mosc-tools-clearcom-freespeak2/raw/main/dist/clearcom-freespeak2-1.0.0.tgz), then in Companion 3.4+:
+   **Connections → Import module package**. (Or build from source and point your
+   developer modules path at `pkg/`.)
 3. **Add the connection** — *Clear-Com: FreeSpeak II Base Station*. Enter the IP and
    your CCM login. Factory default is `admin` / `admin`, but the CCM forces a change on
    first browser login, so use whatever you actually set.
